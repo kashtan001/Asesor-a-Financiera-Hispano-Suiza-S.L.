@@ -774,9 +774,9 @@ def fix_html_layout(template_name='contratto'):
         padding: 0;            /* Никаких дополнительных отступов */
     }
     
-    /* ИСПРАВЛЯЕМ ОТСТУПЫ BODY - ставим 2см слева и справа */
+    /* УБИРАЕМ ОТСТУП СПРАВА - оставляем отступ слева */
     .c8 {
-        padding: 0 2cm !important;  /* 2см слева и справа для текста */
+        padding: 0 0 0 2cm !important;  /* 2см слева, без отступа справа */
         max-width: none !important;  /* Убираем ограничение ширины */
     }
     
@@ -814,7 +814,7 @@ def fix_html_layout(template_name='contratto'):
         font-size: 9pt;  /* Уменьшаем размер шрифта для компактности */
         line-height: 1.0;  /* Компактная высота строки */
         margin: 0;
-        padding: 0 2cm;  /* 2см отступы слева и справа как в garanzia */
+        padding: 0;  /* Без отступов - текст на всю ширину как в contratto */
         overflow: hidden;  /* Предотвращаем выход за границы */
     }
     
@@ -920,6 +920,12 @@ def fix_html_layout(template_name='contratto'):
         color: transparent;
         font-family: Arial, sans-serif;
         box-sizing: border-box;
+    }
+
+    /* УБИРАЕМ ОТСТУПЫ ДЛЯ ТЕКСТА - используем всю ширину страницы как в contratto */
+    .c6 {
+        padding: 0 !important;  /* Без отступов - текст на всю ширину */
+        max-width: none !important;  /* Убираем ограничение ширины */
     }
     
     </style>
