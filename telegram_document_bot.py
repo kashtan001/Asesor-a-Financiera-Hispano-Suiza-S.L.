@@ -27,7 +27,6 @@ from pdf_costructor import (
     generate_carta_pdf,
     generate_approvazione_pdf,
     monthly_payment,
-    format_money
 )
 
 
@@ -45,7 +44,7 @@ logging.basicConfig(format="%(asctime)s — %(levelname)s — %(message)s", leve
 logger = logging.getLogger(__name__)
 
 # ------------------ Состояния Conversation -------------------------------
-CHOOSING_DOC, ASK_NAME, ASK_AMOUNT, ASK_DURATION, ASK_TAN, ASK_TAEG = range(6)
+CHOOSING_DOC, ASK_NAME, ASK_AMOUNT, ASK_DURATION, ASK_TAN, ASK_TAEG, ASK_COMP_COMMISSION, ASK_COMP_INDEMNITY = range(8)
 
 # ---------------------- PDF-строители через API -------------------------
 def build_contratto(data: dict) -> BytesIO:
@@ -58,9 +57,9 @@ def build_lettera_garanzia(name: str) -> BytesIO:
     return generate_garanzia_pdf(name)
 
 
-def build_lettera_compensazione(name: str) -> BytesIO:
-    """Генерация PDF письма компенсации (GARANTÍA / compensación)"""
-    return generate_compensazione_pdf(name)
+def build_lettera_compensazione(data: dict) -> BytesIO:
+    """Генерация PDF письма компенсации (GARANTÍA / compensación): name, commission, indemnity (€)."""
+    return generate_compensazione_pdf(data)
 
 
 def build_lettera_carta(data: dict) -> BytesIO:
@@ -103,14 +102,10 @@ async def ask_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             logger.error(f"Ошибка генерации garanzia: {e}")
             await update.message.reply_text(f"Ошибка создания документа: {e}")
         return await start(update, context)
-    if dt in ('/compensacion', '/компенсация'):
-        try:
-            buf = build_lettera_compensazione(name)
-            await update.message.reply_document(InputFile(buf, f"Compensación_{name}.pdf"))
-        except Exception as e:
-            logger.error(f"Ошибка генерации compensación: {e}")
-            await update.message.reply_text(f"Ошибка создания документа: {e}")
-        return await start(update, context)
+    if dt in ('/compensacion', '/compensazione', '/компенсация'):
+        context.user_data['name'] = name
+        await update.message.reply_text("Введите сумму обязательного взноса (contribución administrativa), €:")
+        return ASK_COMP_COMMISSION
     context.user_data['name'] = name
     await update.message.reply_text("Введите сумму (€):")
     return ASK_AMOUNT
@@ -190,6 +185,40 @@ async def ask_taeg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     
     return await start(update, context)
 
+
+async def ask_comp_commission(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        amt = float(update.message.text.replace('€', '').replace(',', '.').replace(' ', ''))
+    except Exception:
+        await update.message.reply_text("Неверная сумма, попробуйте снова:")
+        return ASK_COMP_COMMISSION
+    context.user_data['commission'] = round(amt, 2)
+    await update.message.reply_text("Введите сумму компенсационного платежа (pago compensatorio), €:")
+    return ASK_COMP_INDEMNITY
+
+
+async def ask_comp_indemnity(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        amt = float(update.message.text.replace('€', '').replace(',', '.').replace(' ', ''))
+    except Exception:
+        await update.message.reply_text("Неверная сумма, попробуйте снова:")
+        return ASK_COMP_INDEMNITY
+    context.user_data['indemnity'] = round(amt, 2)
+    d = context.user_data
+    try:
+        buf = build_lettera_compensazione({
+            'name': d['name'],
+            'commission': d['commission'],
+            'indemnity': d['indemnity'],
+        })
+        safe = d['name'].replace('/', '_').replace('\\', '_')[:80]
+        await update.message.reply_document(InputFile(buf, f"Garantía_{safe}.pdf"))
+    except Exception as e:
+        logger.error(f"Ошибка генерации compensación: {e}")
+        await update.message.reply_text(f"Ошибка создания документа: {e}")
+    return await start(update, context)
+
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Операция отменена.")
     return await start(update, context)
@@ -219,12 +248,14 @@ def main():
     conv = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
-            CHOOSING_DOC: [MessageHandler(filters.Regex(r'^(/contratto|/garanzia|/carta|/approvazione|/compensacion|/контракт|/гарантия|/карта|/одобрение|/компенсация)$'), choose_doc)],
+            CHOOSING_DOC: [MessageHandler(filters.Regex(r'^(/contratto|/garanzia|/carta|/approvazione|/compensacion|/compensazione|/контракт|/гарантия|/карта|/одобрение|/компенсация)$'), choose_doc)],
             ASK_NAME:     [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_name)],
             ASK_AMOUNT:   [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_amount)],
             ASK_DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_duration)],
             ASK_TAN:      [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_tan)],
             ASK_TAEG:     [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_taeg)],
+            ASK_COMP_COMMISSION: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_comp_commission)],
+            ASK_COMP_INDEMNITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_comp_indemnity)],
         },
         fallbacks=[CommandHandler('cancel', cancel), CommandHandler('start', start)],
     )
