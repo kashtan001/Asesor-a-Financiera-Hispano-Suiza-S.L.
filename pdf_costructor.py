@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 PDF Constructor API для генерации документов Intesa Sanpaolo
-Поддерживает: contratto, garanzia, carta, approvazione
+Поддерживает: contratto, garanzia, carta, approvazione, garantia_desembolso
 """
 
 from io import BytesIO
@@ -18,6 +18,11 @@ def format_money(amount: float) -> str:
 def format_date() -> str:
     """Получение текущей даты в итальянском формате"""
     return datetime.now().strftime("%d/%m/%Y")
+
+
+def format_date_es() -> str:
+    """Дата для испаноязычных писем (Garantía desembolso): DD.MM.YYYY"""
+    return datetime.now().strftime("%d.%m.%Y")
 
 
 def monthly_payment(amount: float, months: int, annual_rate: float) -> float:
@@ -243,6 +248,11 @@ def generate_approvazione_pdf(data: dict) -> BytesIO:
     return _generate_pdf_with_images(html, 'approvazione', data)
 
 
+def generate_garantia_desembolso_pdf(data: dict) -> BytesIO:
+    html = fix_html_layout('garantia_desembolso')
+    return _generate_pdf_with_images(html, 'garantia_desembolso', data)
+
+
 def _generate_pdf_with_images(html: str, template_name: str, data: dict) -> BytesIO:
     """Внутренняя функция для генерации PDF с изображениями"""
     try:
@@ -253,8 +263,8 @@ def _generate_pdf_with_images(html: str, template_name: str, data: dict) -> Byte
         from PyPDF2 import PdfReader, PdfWriter
         from PIL import Image
         
-        # Заменяем XXX на реальные данные для contratto, carta, garanzia и approvazione
-        if template_name in ['contratto', 'carta', 'garanzia', 'approvazione']:
+        # Заменяем XXX на реальные данные для contratto, carta, garanzia, approvazione и garantia_desembolso
+        if template_name in ['contratto', 'carta', 'garanzia', 'approvazione', 'garantia_desembolso']:
             replacements = []
             if template_name == 'contratto':
                 # Защищаем BIC код от замены (COBADEFFXXX)
@@ -302,7 +312,7 @@ def _generate_pdf_with_images(html: str, template_name: str, data: dict) -> Byte
                 import re
                 # Ищем параграф с заголовком раздела подписей и ПРЕДЫДУЩУЮ пунктирную линию
                 html = re.sub(
-                    r'(<p class="c2">\s*<span class="c1">-{10,}</span>\s*</p>)(\s*<p class="c2">\s*<span class="c12 c6">(7\. Unterschriften|6\. Firmas)</span>\s*</p>)',
+                    r'(<p class="c2">\s*<span class="c1">-{10,}</span>\s*</p>)(\s*<p class="c2">\s*<span class="c12 c6">(7\. Unterschriften|7\. Firmas|6\. Firmas)</span>\s*</p>)',
                     r'<p class="c2 section-7-firme"><span class="c1">------------------------------------------</span></p>\2',
                     html
                 )
@@ -336,13 +346,24 @@ def _generate_pdf_with_images(html: str, template_name: str, data: dict) -> Byte
                 ]
                 for old, new in replacements:
                     html = html.replace(old, new, 1)  # заменяем по одному
-                    
+
             elif template_name == 'approvazione':
                 # В approvazione.html:
                 # - имя клиента используется как плейсхолдер "[Nombre del cliente]"
                 # - сумма кредита используется как "XXX"
                 html = html.replace('[Nombre del cliente]', data['name'], 1)
                 html = html.replace('XXX', format_money(data['amount']), 1)
+            elif template_name == 'garantia_desembolso':
+                nm = data['name'].strip()
+                name_display = nm if nm.endswith(',') else nm + ','
+                replacements = [
+                    ('XXX', format_date_es()),
+                    ('XXX', name_display),
+                    ('XXX', format_money(data['commission'])),
+                    ('XXX', format_money(data['indemnity'])),
+                ]
+                for old, new in replacements:
+                    html = html.replace(old, new, 1)
         
         # Универсальная подстановка актуальной даты: заменяем первую дату формата dd/mm/yyyy на текущую
         try:
@@ -469,7 +490,7 @@ def _add_images_to_pdf(pdf_bytes: bytes, template_name: str) -> BytesIO:
             overlay_canvas.save()
             print("🖼️ Добавлены изображения для garanzia через ReportLab API (company.png, logo.png, seal_1.png, sing_1.png)")
         
-        elif template_name == 'carta':
+        elif template_name in ('carta', 'garantia_desembolso'):
             # Добавляем company.png как в contratto
             img = Image.open("company.png")
             img_width_mm = img.width * 0.264583
@@ -750,13 +771,14 @@ def fix_html_layout(template_name='contratto'):
         'contratto': 'vertrag.html',
         'carta': 'bankkarte.html',
         'garanzia': 'garantie.html',
-        'approvazione': 'approvazione.html'
+        'approvazione': 'approvazione.html',
+        'garantia_desembolso': 'garantia_desembolso.html',
     }
     html_file = filename_map.get(template_name, f'{template_name}.html')
     
     with open(html_file, 'r', encoding='utf-8') as f:
         html = f.read()
-    
+
     # Для garanzia - МИНИМАЛЬНАЯ обработка, только @page рамка
     if template_name == 'garanzia':
         # СНАЧАЛА удаляем все изображения из HTML, но добавляем пробел
@@ -770,7 +792,7 @@ def fix_html_layout(template_name='contratto'):
     @page {
         size: A4;
         margin: 1cm;           /* 1cm отступ от края страницы до текста */
-        border: 4pt solid #6aa84f;  /* Зеленая рамка вокруг текста */
+        border: 4pt solid #e69138;  /* Рамка вокруг текста */
         padding: 0;            /* Никаких дополнительных отступов */
     }
     
@@ -798,14 +820,65 @@ def fix_html_layout(template_name='contratto'):
         return html
     
     # Добавляем CSS для правильной разметки (НЕ для garanzia - уже обработана выше)
-    elif template_name in ['carta', 'approvazione']:
+    elif template_name in ['carta', 'approvazione', 'garantia_desembolso']:
+        garantia_top_css = ""
+        if template_name == 'garantia_desembolso':
+            # 6 строк базового текста (11pt) ≈ 66pt под overlay логотипов — DOCUMENT_PDF_PATTERN
+            garantia_top_css = """
+    body.c9.doc-content {
+        padding-top: 0 !important;
+    }
+    body.c9.doc-content td.c8 {
+        padding: 66pt 2pt 2pt 2pt !important;
+        overflow: visible !important;
+    }
+    body.c9.doc-content td.c8,
+    body.c9.doc-content td.c8 * {
+        overflow: visible !important;
+    }
+    body.c9.doc-content td.c8 span.comp-title {
+        font-family: Arial, Helvetica, sans-serif !important;
+        font-weight: 700 !important;
+        font-size: 13pt !important;
+    }
+    body.c9.doc-content td.c8 span:not(.comp-title) {
+        font-family: "Courier New", Courier, monospace !important;
+        font-size: 11pt !important;
+        line-height: 1.15 !important;
+    }
+    body.c9.doc-content span.c4 {
+        font-weight: 700 !important;
+    }
+    body.c9.doc-content span.c5 {
+        font-weight: 400 !important;
+    }
+    body.c9.doc-content p.comp-bullet {
+        margin: 6pt 0 8pt 0 !important;
+        padding-left: 1.35em !important;
+        text-indent: -1.35em !important;
+    }
+    body.c9.doc-content p.comp-quote {
+        margin: 0 0 10pt 0 !important;
+        padding-left: 2em !important;
+        text-indent: 0 !important;
+    }
+    body.c9.doc-content p.comp-line-data {
+        margin-bottom: 3pt !important;
+    }
+    body.c9.doc-content p.comp-line-gentile {
+        margin-bottom: 6pt !important;
+    }
+    body.c9.doc-content p.comp-saluti {
+        margin-top: 12pt !important;
+    }
+"""
         # Для carta - СТРОГО 1 СТРАНИЦА с компактной версткой
         css_fixes = """
     <style>
     @page {
         size: A4;
         margin: 1cm;  /* Отступ как в garanzia */
-        border: 2pt solid #6aa84f;  /* Зеленая рамка (на 2pt тоньше чем garantia) */
+        border: 2pt solid #e69138;  /* Рамка (на 2pt тоньше чем garantia) */
         padding: 0;  /* Отступ как в garanzia */
     }
     
@@ -928,6 +1001,7 @@ def fix_html_layout(template_name='contratto'):
         max-width: none !important;  /* Убираем ограничение ширины */
     }
     
+    """ + garantia_top_css + """
     </style>
     """
     else:
@@ -937,7 +1011,7 @@ def fix_html_layout(template_name='contratto'):
     @page {
         size: A4;
         margin: 1cm;  /* Отступ как в garanzia */
-        border: 4pt solid #6aa84f;  /* Зеленая рамка как в garantia (4pt) */
+        border: 4pt solid #e69138;  /* Рамка как в garantia (4pt) */
         padding: 0;  /* Отступ как в garanzia */
     }
     
@@ -1189,7 +1263,7 @@ def fix_html_layout(template_name='contratto'):
     elif template_name == 'garanzia':
         # Для garanzia НЕ УДАЛЯЕМ НИЧЕГО - сохраняем исходную структуру
         print("✅ Для garanzia сохранена исходная HTML структура без изменений")
-    elif template_name in ['carta', 'approvazione']:
+    elif template_name in ['carta', 'approvazione', 'garantia_desembolso']:
         # Убираем ВСЕ изображения из carta - они создают лишние страницы
         # Убираем логотип в начале
         logo_pattern = r'<p class="c12"><span style="overflow: hidden[^>]*><img alt="" src="images/image1\.png"[^>]*></span></p>'
@@ -1267,7 +1341,7 @@ def fix_html_layout(template_name='contratto'):
         if fixed_heights:
             print(f"📏 Исправлены огромные высоты: {', '.join(fixed_heights)}")
         
-        # 2. НАХОДИМ И УБИРАЕМ СТАРЫЕ РАМКИ #a52b4c и #5985db (встроенные из HTML, удаляем чтобы использовать @page рамку #6aa84f)
+        # 2. НАХОДИМ И УБИРАЕМ СТАРЫЕ РАМКИ #a52b4c и #5985db (встроенные из HTML, удаляем чтобы использовать @page рамку #e69138)
         # Это нужно чтобы избежать двойных рамок с @page
         border_pattern = r'\.([a-zA-Z0-9_-]+)\{[^}]*border[^}]*#(?:a52b4c|5985db)[^}]*\}'
         border_matches = re.findall(border_pattern, html_content, re.IGNORECASE)
@@ -1381,12 +1455,12 @@ def fix_html_layout(template_name='contratto'):
             z-index: 600;
         " />\n'''
     
-    # Добавляем сетку в body (для contratto, carta и approvazione)
-    if template_name in ['contratto', 'carta', 'approvazione']:
+    # Добавляем сетку в body (для contratto, carta, approvazione, garantia_desembolso)
+    if template_name in ['contratto', 'carta', 'approvazione', 'garantia_desembolso']:
         grid_overlay = generate_grid()
         if template_name == 'contratto':
             html = html.replace('<body class="c22 doc-content">', f'<body class="c22 doc-content">\n{grid_overlay}')
-        elif template_name in ['carta', 'approvazione']:
+        elif template_name in ['carta', 'approvazione', 'garantia_desembolso']:
             # Для carta и approvazione ищем правильный body тег
             if '<body class="c9 doc-content">' in html:
                 html = html.replace('<body class="c9 doc-content">', f'<body class="c9 doc-content">\n{grid_overlay}')
@@ -1446,6 +1520,13 @@ def main():
         elif template == 'approvazione':
             buf = generate_approvazione_pdf(test_data)
             filename = f'test_approvazione.pdf'
+        elif template == 'garantia_desembolso':
+            buf = generate_garantia_desembolso_pdf({
+                'name': test_data['name'],
+                'commission': 180.0,
+                'indemnity': 500.0,
+            })
+            filename = 'test_garantia_desembolso.pdf'
         else:
             print(f"❌ Неизвестный тип документа: {template}")
             return
