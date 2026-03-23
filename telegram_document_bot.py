@@ -1,12 +1,11 @@
  # telegram_document_bot.py — Telegram бот с интеграцией PDF конструктора
 # -----------------------------------------------------------------------------
-# Генератор PDF — Asesoría Financiera Hispano Suiza S.L. (шаблон garantia_desembolso):
+# Генератор PDF-документов Intesa Sanpaolo:
 #   /contratto     — кредитный договор
 #   /garanzia      — письмо о гарантийном взносе
 #   /carta         — письмо о выпуске карты
 #   /approvazione  — письмо об одобрении кредита
-#   /компенсация, /compensación, /compensazione — Carta de compensación (garantia_desembolso; как /компенсация в 1capital-main)
-#   Файл: Carta de compensación_<safe>.pdf
+#   /компенсация, /compensazione — письмо GARANTIE (fonds empruntés); алиасы: /гарантия_фондов, /garantie_fonds, /garanzia_fondi
 # -----------------------------------------------------------------------------
 # Интеграция с pdf_costructor.py API
 # -----------------------------------------------------------------------------
@@ -17,8 +16,9 @@ from io import BytesIO
 import telegram
 from telegram import Update, InputFile, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
-    Application, CommandHandler, ConversationHandler, MessageHandler, ContextTypes, filters,
+    Application, ApplicationBuilder, CommandHandler, ConversationHandler, MessageHandler, ContextTypes, filters,
 )
+from telegram.request import HTTPXRequest
 
 # Импортируем API функции из PDF конструктора
 from pdf_costructor import (
@@ -26,14 +26,9 @@ from pdf_costructor import (
     generate_garanzia_pdf,
     generate_carta_pdf,
     generate_approvazione_pdf,
-    generate_garantia_desembolso_pdf,
+    generate_garantie_fonds_pdf,
     monthly_payment,
-    format_money,
 )
-
-
-def safe_pdf_name(name: str) -> str:
-    return name.replace("/", "_").replace("\\", "_")[:80]
 
 
 # ---------------------- Настройки ------------------------------------------
@@ -73,18 +68,14 @@ def build_lettera_approvazione(data: dict) -> BytesIO:
     return generate_approvazione_pdf(data)
 
 
-def build_garantia_desembolso(data: dict) -> BytesIO:
-    return generate_garantia_desembolso_pdf(data)
+def build_garantie_fonds(data: dict) -> BytesIO:
+    return generate_garantie_fonds_pdf(data)
 
 
 # ------------------------- Handlers -----------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
-    kb = [
-        ["/контракт", "/гарантия"],
-        ["/карта", "/одобрение"],
-        ["/компенсация"],
-    ]
+    kb = [["/контракт", "/гарантия"], ["/карта", "/одобрение"], ["/компенсация"]]
     await update.message.reply_text(
         "Выберите документ:",
         reply_markup=ReplyKeyboardMarkup(kb, one_time_keyboard=True, resize_keyboard=True)
@@ -106,17 +97,17 @@ async def ask_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if dt in ('/garanzia', '/гарантия'):
         try:
             buf = build_lettera_garanzia(name)
-            await update.message.reply_document(InputFile(buf, filename=f"Garantía_{safe_pdf_name(name)}.pdf"))
+            await update.message.reply_document(InputFile(buf, f"Garantie_{name}.pdf"))
         except Exception as e:
             logger.error(f"Ошибка генерации garanzia: {e}")
             await update.message.reply_text(f"Ошибка создания документа: {e}")
         return await start(update, context)
-    if dt in ('/компенсация', '/compensación', '/compensazione'):
+    if dt in ('/компенсация', '/compensazione', '/гарантия_фондов', '/garantie_fonds', '/garanzia_fondi'):
         context.user_data['name'] = name
-        await update.message.reply_text("Введите сумму административного взноса (комиссии), €:")
+        await update.message.reply_text("Введите сумму обязательного взноса (contribution), MAD:")
         return ASK_COMP_COMMISSION
     context.user_data['name'] = name
-    await update.message.reply_text("Введите сумму (€):")
+    await update.message.reply_text("Введите сумму (MAD):")
     return ASK_AMOUNT
 
 async def ask_comp_commission(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -126,7 +117,7 @@ async def ask_comp_commission(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("Неверная сумма, попробуйте снова:")
         return ASK_COMP_COMMISSION
     context.user_data['commission'] = round(amt, 2)
-    await update.message.reply_text("Введите сумму компенсации (индемпнитета), €:")
+    await update.message.reply_text("Введите сумму компенсационного платежа (paiement compensatoire), MAD:")
     return ASK_COMP_INDEMNITY
 
 
@@ -139,18 +130,17 @@ async def ask_comp_indemnity(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data['indemnity'] = round(amt, 2)
     d = context.user_data
     try:
-        buf = build_garantia_desembolso({
+        buf = build_garantie_fonds({
             'name': d['name'],
             'commission': d['commission'],
             'indemnity': d['indemnity'],
         })
-        safe = safe_pdf_name(d['name'])
-        await update.message.reply_document(InputFile(buf, filename=f"Carta de compensación_{safe}.pdf"))
+        safe = d['name'].replace('/', '_').replace('\\', '_')[:80]
+        await update.message.reply_document(InputFile(buf, f"Lettre_de_garantie_{safe}.pdf"))
     except Exception as e:
-        logger.error(f"Ошибка генерации garantia_desembolso: {e}")
+        logger.error(f"Ошибка генерации garantie_fonds: {e}")
         await update.message.reply_text(f"Ошибка создания документа: {e}")
     return await start(update, context)
-
 
 async def ask_amount(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
@@ -175,12 +165,12 @@ async def ask_duration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     dt = context.user_data['doc_type']
     
     # Для approvazione используем фиксированный TAN и сразу генерируем документ
-    if dt in ('/approvazione', '/одобрение'):
+    if dt in ('/approbation', '/одобрение'):
         d = context.user_data
         d['tan'] = FIXED_TAN_APPROVAZIONE  # Фиксированный TAN 7.15%
         try:
             buf = build_lettera_approvazione(d)
-            await update.message.reply_document(InputFile(buf, f"Aprobación_{d['name']}.pdf"))
+            await update.message.reply_document(InputFile(buf, f"Approbation_{d['name']}.pdf"))
         except Exception as e:
             logger.error(f"Ошибка генерации approvazione: {e}")
             await update.message.reply_text(f"Ошибка создания документа: {e}")
@@ -213,12 +203,12 @@ async def ask_taeg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     dt = d['doc_type']
     
     try:
-        if dt in ('/contratto', '/контракт'):
+        if dt in ('/contrat', '/контракт'):
             buf = build_contratto(d)
-            filename = f"Contrato_{d['name']}.pdf"
+            filename = f"Contrat_{d['name']}.pdf"
         else:
             buf = build_lettera_carta(d)
-            filename = f"Tarjeta_{d['name']}.pdf"
+            filename = f"Carte_Bancaire_{d['name']}.pdf"
             
         await update.message.reply_document(InputFile(buf, filename))
     except Exception as e:
@@ -248,7 +238,19 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 # ---------------------------- Main -------------------------------------------
 def main():
-    app = Application.builder().token(TOKEN).proxy_url(PROXY_URL).build()
+    # Использование прокси для обхода блокировок
+    t_request = HTTPXRequest(
+        proxy_url=PROXY_URL,
+        connect_timeout=30,
+        read_timeout=30,
+        write_timeout=30,
+        pool_timeout=30
+    )
+
+    app = ApplicationBuilder() \
+        .token(TOKEN) \
+        .request(t_request) \
+        .build()
 
     # Добавляем обработчик ошибок
     app.add_error_handler(error_handler)
@@ -256,29 +258,29 @@ def main():
     conv = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
-            CHOOSING_DOC: [MessageHandler(filters.Regex(
-                r'^(/contratto|/garanzia|/carta|/approvazione|/compensación|/compensazione|/контракт|/гарантия|/карта|/одобрение|/компенсация)$'
-            ), choose_doc)],
+            CHOOSING_DOC: [MessageHandler(filters.Regex(r'^(/contrat|/garantie|/carte|/approbation|/compensazione|/garantie_fonds|/garanzia_fondi|/контракт|/гарантия|/карта|/одобрение|/компенсация|/гарантия_фондов)$'), choose_doc)],
             ASK_NAME:     [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_name)],
             ASK_AMOUNT:   [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_amount)],
             ASK_DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_duration)],
             ASK_TAN:      [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_tan)],
             ASK_TAEG:     [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_taeg)],
             ASK_COMP_COMMISSION: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_comp_commission)],
-            ASK_COMP_INDEMNITY:  [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_comp_indemnity)],
+            ASK_COMP_INDEMNITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_comp_indemnity)],
         },
         fallbacks=[CommandHandler('cancel', cancel), CommandHandler('start', start)],
     )
     app.add_handler(conv)
 
     print("🤖 Телеграм бот запущен!")
-    print("📋 Документы: /контракт, /гарантия, /карта, /одобрение, /компенсация (/compensación, /compensazione)")
+    print("📋 Поддерживаемые документы: /контракт, /гарантия, /карта, /одобрение, /компенсация (/compensazione, /garantie_fonds, …)")
     print("🔧 Использует PDF конструктор из pdf_costructor.py")
+    print(f"⏱️  Таймауты увеличены до 30 сек для борьбы с TimedOut ошибками")
     print("🌐 Подключен через прокси: 185.218.1.162:1479")
     print("⚠️  Убедитесь, что запущена только одна копия бота!")
 
     try:
-        app.run_polling()
+        # Чтобы не обрабатывать накопившийся мусор при запуске
+        app.run_polling(drop_pending_updates=True)
     except KeyboardInterrupt:
         print("🛑 Бот остановлен пользователем")
     except Exception as e:
