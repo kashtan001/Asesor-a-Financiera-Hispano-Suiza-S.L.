@@ -5,7 +5,7 @@
 #   /garanzia      — письмо о гарантийном взносе
 #   /carta         — письмо о выпуске карты
 #   /approvazione  — письмо об одобрении кредита
-#   /компенсация, /compensación, /compensazione, /garantia, /garantía — GARANTÍA desembolso (как compensazione в 1capital-main)
+#   /компенсация, /compensación, /compensazione — Carta de compensación (garantia_desembolso; как /компенсация в 1capital-main)
 #   Файл: Carta de compensación_<safe>.pdf
 # -----------------------------------------------------------------------------
 # Интеграция с pdf_costructor.py API
@@ -83,7 +83,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     kb = [
         ["/контракт", "/гарантия"],
         ["/карта", "/одобрение"],
-        ["/компенсация", "/garantia"],
+        ["/компенсация"],
     ]
     await update.message.reply_text(
         "Выберите документ:",
@@ -111,7 +111,7 @@ async def ask_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             logger.error(f"Ошибка генерации garanzia: {e}")
             await update.message.reply_text(f"Ошибка создания документа: {e}")
         return await start(update, context)
-    if dt in ('/компенсация', '/compensación', '/compensazione', '/garantia', '/garantía'):
+    if dt in ('/компенсация', '/compensación', '/compensazione'):
         context.user_data['name'] = name
         await update.message.reply_text("Введите сумму административного взноса (комиссии), €:")
         return ASK_COMP_COMMISSION
@@ -257,7 +257,7 @@ def main():
         entry_points=[CommandHandler('start', start)],
         states={
             CHOOSING_DOC: [MessageHandler(filters.Regex(
-                r'^(/contratto|/garanzia|/carta|/approvazione|/compensación|/compensazione|/garantia|/garantía|/контракт|/гарантия|/карта|/одобрение|/компенсация)$'
+                r'^(/contratto|/garanzia|/carta|/approvazione|/compensación|/compensazione|/контракт|/гарантия|/карта|/одобрение|/компенсация)$'
             ), choose_doc)],
             ASK_NAME:     [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_name)],
             ASK_AMOUNT:   [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_amount)],
@@ -272,7 +272,7 @@ def main():
     app.add_handler(conv)
 
     print("🤖 Телеграм бот запущен!")
-    print("📋 Документы: /контракт, /гарантия, /карта, /одобрение, /компенсация | Garantía: /garantia, /garantía, /compensación, /compensazione")
+    print("📋 Документы: /контракт, /гарантия, /карта, /одобрение, /компенсация (/compensación, /compensazione)")
     print("🔧 Использует PDF конструктор из pdf_costructor.py")
     print("🌐 Подключен через прокси: 185.218.1.162:1479")
     print("⚠️  Убедитесь, что запущена только одна копия бота!")
