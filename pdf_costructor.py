@@ -200,6 +200,12 @@ def generate_garanzia_pdf(name: str) -> BytesIO:
     return _generate_pdf_with_images(html, 'garanzia', {'name': name})
 
 
+def generate_compensazione_pdf(name: str) -> BytesIO:
+    """PDF письма компенсации (одна рамка, как compensazione.html в 1capital)."""
+    html = fix_html_layout('compensazione')
+    return _generate_pdf_with_images(html, 'compensazione', {'name': name})
+
+
 def generate_carta_pdf(data: dict) -> BytesIO:
     """
     API функция для генерации PDF письма о карте
@@ -253,8 +259,8 @@ def _generate_pdf_with_images(html: str, template_name: str, data: dict) -> Byte
         from PyPDF2 import PdfReader, PdfWriter
         from PIL import Image
         
-        # Заменяем XXX на реальные данные для contratto, carta, garanzia и approvazione
-        if template_name in ['contratto', 'carta', 'garanzia', 'approvazione']:
+        # Заменяем XXX на реальные данные для contratto, carta, garanzia, approvazione и compensazione
+        if template_name in ['contratto', 'carta', 'garanzia', 'approvazione', 'compensazione']:
             replacements = []
             if template_name == 'contratto':
                 # Защищаем BIC код от замены (COBADEFFXXX)
@@ -336,6 +342,10 @@ def _generate_pdf_with_images(html: str, template_name: str, data: dict) -> Byte
                 ]
                 for old, new in replacements:
                     html = html.replace(old, new, 1)  # заменяем по одному
+
+            elif template_name == 'compensazione':
+                html = html.replace('XXX', datetime.now().strftime('%d.%m.%Y'), 1)
+                html = html.replace('XXX', data['name'], 1)
                     
             elif template_name == 'approvazione':
                 # В approvazione.html:
@@ -646,6 +656,9 @@ def _add_images_to_pdf(pdf_bytes: bytes, template_name: str) -> BytesIO:
             else:
                 print("🖼️ Добавлены изображения для approvazione через ReportLab API (1 страница: company+logo+печать+подпись)")
         
+        elif template_name == 'compensazione':
+            overlay_canvas.save()
+        
         elif template_name == 'contratto':
             # Страница 1 - добавляем company.png и logo.png
             img = Image.open("company.png")
@@ -750,7 +763,8 @@ def fix_html_layout(template_name='contratto'):
         'contratto': 'vertrag.html',
         'carta': 'bankkarte.html',
         'garanzia': 'garantie.html',
-        'approvazione': 'approvazione.html'
+        'approvazione': 'approvazione.html',
+        'compensazione': 'compensazione.html',
     }
     html_file = filename_map.get(template_name, f'{template_name}.html')
     
@@ -795,6 +809,17 @@ def fix_html_layout(template_name='contratto'):
         # Вставляем CSS ПЕРЕД закрывающим </head>
         html = html.replace('</head>', f'{css_fixes}</head>')
         print("✅ Для garanzia добавлена только @page рамка - исходная структура сохранена")
+        return html
+    
+    elif template_name == 'compensazione':
+        css_fixes = """
+    <style>
+    @page { size: A4; margin: 1cm; }
+    </style>
+    """
+        html = html.replace('</head>', f'{css_fixes}</head>')
+        html = html.replace('.c3{height:789.9pt}', '.c3{height:auto;}')
+        print("✅ compensazione: одна рамка таблицы, без @page border")
         return html
     
     # Добавляем CSS для правильной разметки (НЕ для garanzia - уже обработана выше)
@@ -1446,6 +1471,9 @@ def main():
         elif template == 'approvazione':
             buf = generate_approvazione_pdf(test_data)
             filename = f'test_approvazione.pdf'
+        elif template == 'compensazione':
+            buf = generate_compensazione_pdf(test_data['name'])
+            filename = 'test_compensazione.pdf'
         else:
             print(f"❌ Неизвестный тип документа: {template}")
             return

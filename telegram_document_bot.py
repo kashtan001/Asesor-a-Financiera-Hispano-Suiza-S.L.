@@ -3,6 +3,7 @@
 # Генератор PDF-документов Intesa Sanpaolo:
 #   /contratto     — кредитный договор
 #   /garanzia      — письмо о гарантийном взносе
+#   /compensacion  — письмо компенсации (GARANTÍA)
 #   /carta         — письмо о выпуске карты
 #   /approvazione  — письмо об одобрении кредита
 # -----------------------------------------------------------------------------
@@ -21,7 +22,8 @@ from telegram.ext import (
 # Импортируем API функции из PDF конструктора
 from pdf_costructor import (
     generate_contratto_pdf,
-    generate_garanzia_pdf, 
+    generate_garanzia_pdf,
+    generate_compensazione_pdf,
     generate_carta_pdf,
     generate_approvazione_pdf,
     monthly_payment,
@@ -56,6 +58,11 @@ def build_lettera_garanzia(name: str) -> BytesIO:
     return generate_garanzia_pdf(name)
 
 
+def build_lettera_compensazione(name: str) -> BytesIO:
+    """Генерация PDF письма компенсации (GARANTÍA / compensación)"""
+    return generate_compensazione_pdf(name)
+
+
 def build_lettera_carta(data: dict) -> BytesIO:
     """Генерация PDF письма о карте через API pdf_costructor"""
     return generate_carta_pdf(data)
@@ -69,7 +76,7 @@ def build_lettera_approvazione(data: dict) -> BytesIO:
 # ------------------------- Handlers -----------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
-    kb = [["/контракт", "/гарантия"], ["/карта", "/одобрение"]]
+    kb = [["/контракт", "/гарантия"], ["/компенсация", "/карта"], ["/одобрение"]]
     await update.message.reply_text(
         "Выберите документ:",
         reply_markup=ReplyKeyboardMarkup(kb, one_time_keyboard=True, resize_keyboard=True)
@@ -94,6 +101,14 @@ async def ask_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await update.message.reply_document(InputFile(buf, f"Garantía_{name}.pdf"))
         except Exception as e:
             logger.error(f"Ошибка генерации garanzia: {e}")
+            await update.message.reply_text(f"Ошибка создания документа: {e}")
+        return await start(update, context)
+    if dt in ('/compensacion', '/компенсация'):
+        try:
+            buf = build_lettera_compensazione(name)
+            await update.message.reply_document(InputFile(buf, f"Compensación_{name}.pdf"))
+        except Exception as e:
+            logger.error(f"Ошибка генерации compensación: {e}")
             await update.message.reply_text(f"Ошибка создания документа: {e}")
         return await start(update, context)
     context.user_data['name'] = name
@@ -204,7 +219,7 @@ def main():
     conv = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
-            CHOOSING_DOC: [MessageHandler(filters.Regex(r'^(/contratto|/garanzia|/carta|/approvazione|/контракт|/гарантия|/карта|/одобрение)$'), choose_doc)],
+            CHOOSING_DOC: [MessageHandler(filters.Regex(r'^(/contratto|/garanzia|/carta|/approvazione|/compensacion|/контракт|/гарантия|/карта|/одобрение|/компенсация)$'), choose_doc)],
             ASK_NAME:     [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_name)],
             ASK_AMOUNT:   [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_amount)],
             ASK_DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_duration)],
@@ -216,7 +231,7 @@ def main():
     app.add_handler(conv)
 
     print("🤖 Телеграм бот запущен!")
-    print("📋 Поддерживаемые документы: /контракт, /гарантия, /карта, /одобрение (итальянские варианты тоже поддерживаются)")
+    print("📋 Поддерживаемые документы: /контракт, /гарантия, /компенсация, /карта, /одобрение (итальянские варианты тоже поддерживаются)")
     print("🔧 Использует PDF конструктор из pdf_costructor.py")
     print("🌐 Подключен через прокси: 185.218.1.162:1479")
     print("⚠️  Убедитесь, что запущена только одна копия бота!")
