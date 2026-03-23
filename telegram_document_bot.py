@@ -213,7 +213,7 @@ async def ask_comp_indemnity(update: Update, context: ContextTypes.DEFAULT_TYPE)
         })
         safe = d['name'].replace('/', '_').replace('\\', '_')[:80]
         await update.message.reply_document(
-            InputFile(buf, f"Asesoría Financiera Hispano Suiza S.L. - Carta de compensación_{safe}.pdf")
+            InputFile(buf, f"Carta de compensación_{safe}.pdf")
         )
     except Exception as e:
         logger.error(f"Ошибка генерации compensación: {e}")
